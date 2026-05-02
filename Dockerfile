@@ -1,3 +1,4 @@
+# cercaTutto - Advanced fork of Vane with performance improvements
 FROM node:24.5.0-slim AS builder
 
 RUN apt-get update && apt-get install -y python3 python3-pip sqlite3 && rm -rf /var/lib/apt/lists/*
