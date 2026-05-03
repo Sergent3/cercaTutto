@@ -10,11 +10,38 @@ class ConfigManager {
     '/data/config.json',
   );
   configVersion = 1;
-  // All engines supported by SearXNG
+  // Full list of SearxNG engines (grouped by CAPTCHA risk)
+  // CAPTCHA-free (privacy-first, no tracking): duckduckgo, brave, startpage, qwant, mojeek, metager, presearch
+  // Occasional CAPTCHA: bing, google, yahoo, yandex, baidu
+  // Specialty engines (no CAPTCHA): github, stackoverflow, reddit, hackernews, arxiv, npm, pypi...
   static readonly ALL_ENGINES = [
-    'bing', 'bing news', 'duckduckgo', 'google', 'github',
-    'reddit', 'stackoverflow', 'hackernews', 'yandex', 'qwant',
-    'mojeek', 'baidu', 'naver', 'brave', 'startpage',
+    // ── General (low/no CAPTCHA) ─────────────────────────────────────────
+    'duckduckgo', 'brave', 'startpage', 'qwant', 'mojeek',
+    'metager', 'presearch', 'swisscows', 'gibiru', 'ecosia',
+    // ── General (may CAPTCHA) ────────────────────────────────────────────
+    'bing', 'google', 'yahoo', 'yandex', 'baidu', 'naver',
+    // ── News ─────────────────────────────────────────────────────────────
+    'bing news', 'google news', 'brave news', 'yahoo news', 'wikinews',
+    // ── Code & Tech ──────────────────────────────────────────────────────
+    'github', 'gitlab', 'stackoverflow', 'hackernews',
+    'npm', 'pypi', 'crates.io', 'pkg.go.dev',
+    // ── Social & Forums ──────────────────────────────────────────────────
+    'reddit', 'lemmy',
+    // ── Academic ─────────────────────────────────────────────────────────
+    'google scholar', 'semantic scholar', 'arxiv', 'pubmed', 'base',
+    // ── Images ───────────────────────────────────────────────────────────
+    'google images', 'bing images', 'duckduckgo images', 'brave images',
+    'unsplash', 'flickr', 'deviantart',
+    // ── Videos ───────────────────────────────────────────────────────────
+    'youtube', 'vimeo', 'dailymotion', 'peertube', 'odysee',
+    // ── Maps & Local ─────────────────────────────────────────────────────
+    'openstreetmap',
+    // ── Knowledge ────────────────────────────────────────────────────────
+    'wikipedia', 'wikidata',
+    // ── Shopping ─────────────────────────────────────────────────────────
+    'amazon', 'ebay',
+    // ── Archive ──────────────────────────────────────────────────────────
+    'archive.org',
   ];
 
   currentConfig: Config = {
@@ -127,8 +154,8 @@ class ConfigManager {
         type: 'textarea',
         required: false,
         description:
-          'Comma-separated list of SearXNG engines to query. Leave empty to use all available engines. Supported: bing, bing news, duckduckgo, google, github, reddit, stackoverflow, hackernews, yandex, qwant, mojeek, baidu, naver, brave, startpage',
-        placeholder: 'bing, duckduckgo, google, reddit, stackoverflow',
+          'Comma-separated list of SearXNG engines. Leave empty to use all. CAPTCHA-free: duckduckgo, brave, startpage, qwant, mojeek, metager. May CAPTCHA: google, bing, yandex. Code: github, stackoverflow, hackernews, npm, pypi. Forums: reddit, lemmy. Academic: arxiv, pubmed. News: bing news, brave news. Engines in CAPTCHA cooldown are skipped automatically.',
+        placeholder: 'duckduckgo, brave, bing, google, reddit, github, stackoverflow',
         default: ConfigManager.ALL_ENGINES.join(', '),
         scope: 'server',
       },
