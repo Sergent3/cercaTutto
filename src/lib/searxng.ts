@@ -18,6 +18,31 @@ interface SearxngSearchResult {
   iframe_src?: string;
 }
 
+// ─── Engine Language Map ────────────────────────────────────────────────────
+// Maps SearxNG engine names to their preferred query language.
+// Engines not listed here accept English queries natively.
+
+export const ENGINE_LANGUAGE_MAP: Record<string, string> = {
+  'baidu': 'zh-CN',
+  'baidu kaifa': 'zh-CN',
+  'naver': 'ko',
+  'yandex': 'ru',
+};
+
+/**
+ * Groups a list of engine names by language.
+ * Returns { [languageCode]: string[] } — e.g. { 'en': ['bing','google'], 'zh-CN': ['baidu'] }
+ */
+export function groupEnginesByLanguage(engines: string[]): Record<string, string[]> {
+  const groups: Record<string, string[]> = {};
+  for (const engine of engines) {
+    const lang = ENGINE_LANGUAGE_MAP[engine.toLowerCase()] ?? 'en';
+    if (!groups[lang]) groups[lang] = [];
+    groups[lang].push(engine);
+  }
+  return groups;
+}
+
 // ─── Engine Health Tracker ──────────────────────────────────────────────────
 // Tracks per-engine CAPTCHA/rate-limit failures.
 // Engines in cooldown are excluded from future requests automatically.

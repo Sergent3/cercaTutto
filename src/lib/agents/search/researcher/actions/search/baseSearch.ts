@@ -1,6 +1,6 @@
 import BaseEmbedding from '@/lib/models/base/embedding';
 import BaseLLM from '@/lib/models/base/llm';
-import { searchSearxng, SearxngSearchOptions } from '@/lib/searxng';
+import { searchSearxng, SearxngSearchOptions, groupEnginesByLanguage } from '@/lib/searxng';
 import SessionManager from '@/lib/session';
 import { Chunk, ResearchBlock, SearchResultsResearchBlock } from '@/lib/types';
 import { SearchAgentConfig } from '../../../types';
@@ -8,6 +8,46 @@ import computeSimilarity from '@/lib/utils/computeSimilarity';
 import z from 'zod';
 import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
+
+/**
+ * Translates queries into the target language using the LLM.
+ * Returns the same queries in the target language (e.g. 'zh-CN', 'ko', 'ru').
+ */
+const translateQueries = async (
+  queries: string[],
+  targetLang: string,
+  llm: BaseLLM<any>,
+): Promise<string[]> => {
+  const langNames: Record<string, string> = {
+    'zh-CN': 'Simplified Chinese',
+    'ko': 'Korean',
+    'ru': 'Russian',
+  };
+  const langName = langNames[targetLang] ?? targetLang;
+
+  const schema = z.object({
+    translated: z.array(z.string()).describe('Translated queries, one per input query'),
+  });
+
+  try {
+    const result = await llm.generateObject<typeof schema>({
+      schema,
+      messages: [
+        {
+          role: 'system',
+          content: `Translate search queries to ${langName}. Return exactly one translation per input query. Keep the meaning precise for web search.`,
+        },
+        {
+          role: 'user',
+          content: queries.join('\n'),
+        },
+      ],
+    });
+    return result.translated.length === queries.length ? result.translated : queries;
+  } catch {
+    return queries; // Fallback to original on failure
+  }
+};
 
 export const executeSearch = async (input: {
   queries: string[];
@@ -40,9 +80,30 @@ export const executeSearch = async (input: {
 
     const results: Chunk[] = [];
 
-    const search = async (q: string) => {
+    // Build per-language query sets if engines have language requirements
+    const requestedEngines = input.searchConfig?.engines ?? [];
+    const engineGroups = requestedEngines.length > 0
+      ? groupEnginesByLanguage(requestedEngines)
+      : { en: [] };
+
+    // Pre-translate queries for non-English engine groups (concurrently)
+    const translationEntries = Object.entries(engineGroups).filter(([lang]) => lang !== 'en');
+    const translatedQueryMap = new Map<string, string[]>();
+
+    if (translationEntries.length > 0) {
+      await Promise.allSettled(
+        translationEntries.map(async ([lang]) => {
+          const translated = await translateQueries(input.queries, lang, input.llm);
+          translatedQueryMap.set(lang, translated);
+        }),
+      );
+    }
+
+    const search = async (q: string, overrideEngines?: string[], language?: string) => {
       const res = await searchSearxng(q, {
         ...(input.searchConfig ? input.searchConfig : {}),
+        ...(overrideEngines ? { engines: overrideEngines } : {}),
+        ...(language ? { language } : {}),
       });
 
       let resultChunks: Chunk[] = [];
@@ -125,8 +186,28 @@ export const executeSearch = async (input: {
       }
     };
 
+    // Build all search tasks: English engines + per-language translated queries
+    const searchTasks: Promise<void>[] = [];
+
+    // Standard (English) engines
+    const englishEngines = engineGroups['en'] ?? [];
+    for (const q of input.queries) {
+      searchTasks.push(
+        search(q, englishEngines.length > 0 ? englishEngines : undefined, undefined),
+      );
+    }
+
+    // Language-specific engines with translated queries
+    for (const [lang, engines] of Object.entries(engineGroups)) {
+      if (lang === 'en' || engines.length === 0) continue;
+      const translatedQueries = translatedQueryMap.get(lang) ?? input.queries;
+      for (const q of translatedQueries) {
+        searchTasks.push(search(q, engines, lang));
+      }
+    }
+
     // Use allSettled to continue even if some searches fail (timeout, error, etc)
-    await Promise.allSettled(input.queries.map(search));
+    await Promise.allSettled(searchTasks);
 
     results.sort((a, b) => b.metadata.similarity - a.metadata.similarity);
 

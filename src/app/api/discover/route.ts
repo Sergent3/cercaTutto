@@ -1,4 +1,4 @@
-import { searchSearxng } from '@/lib/searxng';
+import { searchSearxng, groupEnginesByLanguage, ENGINE_LANGUAGE_MAP } from '@/lib/searxng';
 import configManager from '@/lib/config';
 
 const websitesForTopic = {
@@ -64,30 +64,81 @@ export const GET = async (req: Request) => {
       const seenUrls = new Set<string>();
       const engines = getEnabledEngines();
 
+      // Group engines by language to send translated queries where needed
+      const engineGroups = engines.length > 0 ? groupEnginesByLanguage(engines) : { en: [] };
+
+      // Pre-translated queries for non-English engines (static map for discover topics)
+      const DISCOVER_QUERY_TRANSLATIONS: Record<string, Record<string, string>> = {
+        'zh-CN': {
+          'technology news': '科技新闻',
+          'latest tech': '最新科技',
+          'AI': '人工智能',
+          'science and innovation': '科学与创新',
+          'finance news': '财经新闻',
+          'economy': '经济',
+          'stock market': '股市',
+          'investing': '投资',
+          'art news': '艺术新闻',
+          'culture': '文化',
+          'modern art': '现代艺术',
+          'cultural events': '文化活动',
+          'sports news': '体育新闻',
+          'latest sports': '最新体育',
+          'cricket football tennis': '板球 足球 网球',
+          'entertainment news': '娱乐新闻',
+          'movies': '电影',
+          'TV shows': '电视节目',
+          'celebrities': '明星',
+        },
+        'ko': {
+          'technology news': '기술 뉴스',
+          'latest tech': '최신 기술',
+          'AI': '인공지능',
+          'science and innovation': '과학과 혁신',
+          'finance news': '금융 뉴스',
+          'economy': '경제',
+          'stock market': '주식시장',
+          'investing': '투자',
+          'sports news': '스포츠 뉴스',
+          'entertainment news': '연예 뉴스',
+          'movies': '영화',
+        },
+      };
+
+      const getTranslatedQuery = (query: string, lang: string): string =>
+        DISCOVER_QUERY_TRANSLATIONS[lang]?.[query] ?? query;
+
       // Promise.allSettled ignores failures - continues even if engines fail
-      const searchPromises = selectedTopic.links.flatMap((link) =>
-        selectedTopic.query.map(async (query) => {
-          try {
-            const results = await Promise.race([
-              searchSearxng(`site:${link} ${query}`, {
-                pageno: 1,
-                language: 'en',
-                // Pass configured engines; empty array = SearXNG uses all available
-                ...(engines.length > 0 ? { engines } : {}),
-              }),
-              timeoutPromise,
-            ]);
-            return results.results || [];
-          } catch (err) {
-            // Engine failed (CAPTCHA, timeout, etc) - log and continue
-            console.warn(
-              `[cercaTutto] Search failed for "${query}" on ${link}:`,
-              err instanceof Error ? err.message : String(err)
+      const searchPromises: Promise<any[]>[] = [];
+
+      for (const link of selectedTopic.links) {
+        for (const query of selectedTopic.query) {
+          for (const [lang, langEngines] of Object.entries(engineGroups)) {
+            const translatedQuery = lang !== 'en' ? getTranslatedQuery(query, lang) : query;
+            searchPromises.push(
+              (async () => {
+                try {
+                  const results = await Promise.race([
+                    searchSearxng(`site:${link} ${translatedQuery}`, {
+                      pageno: 1,
+                      language: lang !== 'en' ? lang : 'en',
+                      ...(langEngines.length > 0 ? { engines: langEngines } : engines.length > 0 ? { engines } : {}),
+                    }),
+                    timeoutPromise,
+                  ]);
+                  return results.results || [];
+                } catch (err) {
+                  console.warn(
+                    `[cercaTutto] Search failed for "${translatedQuery}" on ${link}:`,
+                    err instanceof Error ? err.message : String(err),
+                  );
+                  return [];
+                }
+              })(),
             );
-            return [];
           }
-        })
-      );
+        }
+      }
 
       // Use allSettled - if one search fails, others continue
       const results = await Promise.allSettled(searchPromises);
