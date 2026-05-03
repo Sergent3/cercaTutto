@@ -1,4 +1,5 @@
 import { searchSearxng } from '@/lib/searxng';
+import configManager from '@/lib/config';
 
 const websitesForTopic = {
   tech: {
@@ -25,13 +26,18 @@ const websitesForTopic = {
 
 type Topic = keyof typeof websitesForTopic;
 
-// Query su TUTTI i motori disponibili (including forums, reddit, ecc)
-// Se uno fallisce (CAPTCHA, timeout), gli altri continuano
-const ALL_SEARCH_ENGINES = [
-  'bing', 'bing news', 'duckduckgo', 'google', 'github', 'reddit',
-  'stackoverflow', 'hackernews', 'yandex', 'searx', 'qwant', 'mojeek',
-  'baidu', 'baidu kaifa', 'naver'
-];
+/**
+ * Reads enabled engines from config.
+ * Returns an array of engine names, or [] (all engines) if config is empty/default.
+ */
+const getEnabledEngines = (): string[] => {
+  const raw: string = configManager.getConfig('search.enabledEngines', '') as string;
+  if (!raw || !raw.trim()) return [];
+  return raw
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+};
 
 /**
  * cercaTutto discover endpoint - Robust search across ALL engines
@@ -56,6 +62,7 @@ export const GET = async (req: Request) => {
 
     if (mode === 'normal') {
       const seenUrls = new Set<string>();
+      const engines = getEnabledEngines();
 
       // Promise.allSettled ignores failures - continues even if engines fail
       const searchPromises = selectedTopic.links.flatMap((link) =>
@@ -65,7 +72,8 @@ export const GET = async (req: Request) => {
               searchSearxng(`site:${link} ${query}`, {
                 pageno: 1,
                 language: 'en',
-                // Empty engines array = use ALL available (including forums, Reddit, Yandex, etc)
+                // Pass configured engines; empty array = SearXNG uses all available
+                ...(engines.length > 0 ? { engines } : {}),
               }),
               timeoutPromise,
             ]);
@@ -106,11 +114,13 @@ export const GET = async (req: Request) => {
           selectedTopic.links[Math.floor(Math.random() * selectedTopic.links.length)];
         const randomQuery =
           selectedTopic.query[Math.floor(Math.random() * selectedTopic.query.length)];
+        const engines = getEnabledEngines();
 
         const results = await Promise.race([
           searchSearxng(`site:${randomLink} ${randomQuery}`, {
             pageno: 1,
             language: 'en',
+            ...(engines.length > 0 ? { engines } : {}),
           }),
           timeoutPromise,
         ]);

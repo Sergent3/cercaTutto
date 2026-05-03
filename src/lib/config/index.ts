@@ -10,6 +10,13 @@ class ConfigManager {
     '/data/config.json',
   );
   configVersion = 1;
+  // All engines supported by SearXNG
+  static readonly ALL_ENGINES = [
+    'bing', 'bing news', 'duckduckgo', 'google', 'github',
+    'reddit', 'stackoverflow', 'hackernews', 'yandex', 'qwant',
+    'mojeek', 'baidu', 'naver', 'brave', 'startpage',
+  ];
+
   currentConfig: Config = {
     version: this.configVersion,
     setupComplete: false,
@@ -18,6 +25,7 @@ class ConfigManager {
     modelProviders: [],
     search: {
       searxngURL: '',
+      enabledEngines: ConfigManager.ALL_ENGINES.join(','),
     },
   };
   uiConfigSections: UIConfigSections = {
@@ -112,6 +120,17 @@ class ConfigManager {
         default: '',
         scope: 'server',
         env: 'SEARXNG_API_URL',
+      },
+      {
+        name: 'Search Engines',
+        key: 'enabledEngines',
+        type: 'textarea',
+        required: false,
+        description:
+          'Comma-separated list of SearXNG engines to query. Leave empty to use all available engines. Supported: bing, bing news, duckduckgo, google, github, reddit, stackoverflow, hackernews, yandex, qwant, mojeek, baidu, naver, brave, startpage',
+        placeholder: 'bing, duckduckgo, google, reddit, stackoverflow',
+        default: ConfigManager.ALL_ENGINES.join(', '),
+        scope: 'server',
       },
     ],
   };
