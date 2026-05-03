@@ -125,7 +125,8 @@ export const executeSearch = async (input: {
       }
     };
 
-    await Promise.all(input.queries.map(search));
+    // Use allSettled to continue even if some searches fail (timeout, error, etc)
+    await Promise.allSettled(input.queries.map(search));
 
     results.sort((a, b) => b.metadata.similarity - a.metadata.similarity);
 

@@ -89,16 +89,32 @@ class ActionRegistry {
   ): Promise<ActionOutput[]> {
     const results: ActionOutput[] = [];
 
-    await Promise.all(
+    // Use allSettled to continue even if some actions fail
+    const outcomes = await Promise.allSettled(
       actions.map(async (actionConfig) => {
-        const output = await this.execute(
-          actionConfig.name,
-          actionConfig.arguments,
-          additionalConfig,
-        );
-        results.push(output);
+        try {
+          return await this.execute(
+            actionConfig.name,
+            actionConfig.arguments,
+            additionalConfig,
+          );
+        } catch (err) {
+          console.warn(
+            `[cercaTutto] Action ${actionConfig.name} failed:`,
+            err instanceof Error ? err.message : String(err)
+          );
+          // Return null for failed actions - they will be filtered out
+          return null;
+        }
       }),
     );
+
+    // Extract successful results
+    outcomes.forEach((outcome) => {
+      if (outcome.status === 'fulfilled' && outcome.value !== null) {
+        results.push(outcome.value);
+      }
+    });
 
     return results;
   }

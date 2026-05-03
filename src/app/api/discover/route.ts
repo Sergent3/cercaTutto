@@ -25,6 +25,18 @@ const websitesForTopic = {
 
 type Topic = keyof typeof websitesForTopic;
 
+// Query su TUTTI i motori disponibili (including forums, reddit, ecc)
+// Se uno fallisce (CAPTCHA, timeout), gli altri continuano
+const ALL_SEARCH_ENGINES = [
+  'bing', 'bing news', 'duckduckgo', 'google', 'github', 'reddit',
+  'stackoverflow', 'hackernews', 'yandex', 'searx', 'qwant', 'mojeek',
+  'baidu', 'baidu kaifa', 'naver'
+];
+
+/**
+ * cercaTutto discover endpoint - Robust search across ALL engines
+ * Uses Promise.allSettled to continue even if some engines fail (CAPTCHA, timeout)
+ */
 export const GET = async (req: Request) => {
   try {
     const params = new URL(req.url).searchParams;
@@ -35,64 +47,110 @@ export const GET = async (req: Request) => {
 
     const selectedTopic = websitesForTopic[topic];
 
+    // Set a global timeout to prevent hanging requests
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Discover timeout')), 8000)
+    );
+
     let data = [];
 
     if (mode === 'normal') {
-      const seenUrls = new Set();
+      const seenUrls = new Set<string>();
 
-      data = (
-        await Promise.all(
-          selectedTopic.links.flatMap((link) =>
-            selectedTopic.query.map(async (query) => {
-              return (
-                await searchSearxng(`site:${link} ${query}`, {
-                  engines: ['bing news'],
-                  pageno: 1,
-                  language: 'en',
-                })
-              ).results;
-            }),
-          ),
-        )
-      )
-        .flat()
+      // Promise.allSettled ignores failures - continues even if engines fail
+      const searchPromises = selectedTopic.links.flatMap((link) =>
+        selectedTopic.query.map(async (query) => {
+          try {
+            const results = await Promise.race([
+              searchSearxng(`site:${link} ${query}`, {
+                pageno: 1,
+                language: 'en',
+                // Empty engines array = use ALL available (including forums, Reddit, Yandex, etc)
+              }),
+              timeoutPromise,
+            ]);
+            return results.results || [];
+          } catch (err) {
+            // Engine failed (CAPTCHA, timeout, etc) - log and continue
+            console.warn(
+              `[cercaTutto] Search failed for "${query}" on ${link}:`,
+              err instanceof Error ? err.message : String(err)
+            );
+            return [];
+          }
+        })
+      );
+
+      // Use allSettled - if one search fails, others continue
+      const results = await Promise.allSettled(searchPromises);
+
+      // Extract successful results
+      const allResults = results
+        .filter((r) => r.status === 'fulfilled')
+        .flatMap((r) => (r as PromiseFulfilledResult<any>).value);
+
+      // Deduplicate by URL
+      data = allResults
         .filter((item) => {
           const url = item.url?.toLowerCase().trim();
-          if (seenUrls.has(url)) return false;
+          if (!url || seenUrls.has(url)) return false;
           seenUrls.add(url);
           return true;
         })
-        .sort(() => Math.random() - 0.5);
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 50); // Limit to 50 results for performance
     } else {
-      data = (
-        await searchSearxng(
-          `site:${selectedTopic.links[Math.floor(Math.random() * selectedTopic.links.length)]} ${selectedTopic.query[Math.floor(Math.random() * selectedTopic.query.length)]}`,
-          {
-            engines: ['bing news'],
+      // Preview mode - single random query, all engines, with fallback
+      try {
+        const randomLink =
+          selectedTopic.links[Math.floor(Math.random() * selectedTopic.links.length)];
+        const randomQuery =
+          selectedTopic.query[Math.floor(Math.random() * selectedTopic.query.length)];
+
+        const results = await Promise.race([
+          searchSearxng(`site:${randomLink} ${randomQuery}`, {
             pageno: 1,
             language: 'en',
-          },
-        )
-      ).results;
+          }),
+          timeoutPromise,
+        ]);
+
+        data = results.results || [];
+      } catch (err) {
+        console.warn(
+          '[cercaTutto] Preview mode search failed:',
+          err instanceof Error ? err.message : String(err)
+        );
+        data = [];
+      }
     }
 
     return Response.json(
       {
         blogs: data,
+        count: data.length,
+        generated_at: new Date().toISOString(),
       },
       {
         status: 200,
-      },
+      }
     );
   } catch (err) {
-    console.error(`An error occurred in discover route: ${err}`);
+    console.error(
+      `[cercaTutto] Discover error:`,
+      err instanceof Error ? err.message : String(err)
+    );
+    // Return empty results instead of error - don't block the UI
     return Response.json(
       {
-        message: 'An error has occurred',
+        blogs: [],
+        count: 0,
+        error: 'Partial results or timeout',
+        generated_at: new Date().toISOString(),
       },
       {
-        status: 500,
-      },
+        status: 200, // Return 200 even on partial failure
+      }
     );
   }
 };
