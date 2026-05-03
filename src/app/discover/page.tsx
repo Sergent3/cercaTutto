@@ -40,37 +40,89 @@ const topics: { key: string; display: string }[] = [
 const Page = () => {
   const [discover, setDiscover] = useState<Discover[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTopic, setActiveTopic] = useState<string>(topics[0].key);
+  const [retryCount, setRetryCount] = useState(0);
 
-  const fetchArticles = async (topic: string) => {
+  const fetchArticles = async (topic: string, retry = 0) => {
     setLoading(true);
+    setError(null);
+    const MAX_RETRIES = 2;
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
       const res = await fetch(`/api/discover?topic=${topic}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       const data = await res.json();
 
-      if (!res.ok) {
-        throw new Error(data.message);
+      // cercaTutto always returns 200, even on partial failure
+      // Filter out blogs without thumbnail
+      const filteredBlogs = (data.blogs || []).filter(
+        (blog: Discover) => blog.thumbnail
+      );
+
+      setDiscover(filteredBlogs);
+      setRetryCount(0); // Reset retry count on success
+
+      // Show info if results are partial or empty
+      if (!res.ok || filteredBlogs.length === 0) {
+        toast.info(
+          filteredBlogs.length === 0
+            ? 'No results found for this topic'
+            : 'Partial results (some sources unavailable)',
+          {
+            duration: 3000,
+          }
+        );
+      }
+    } catch (err: any) {
+      const isTimeout = err.name === 'AbortError';
+      const errorMsg = isTimeout ? 'Request timeout' : err.message;
+
+      console.error('[cercaTutto] Discover error:', errorMsg);
+      setError(errorMsg);
+
+      // Auto-retry on timeout or network error
+      if ((isTimeout || err instanceof TypeError) && retry < MAX_RETRIES) {
+        console.warn(`[cercaTutto] Retrying... (${retry + 1}/${MAX_RETRIES})`);
+        setRetryCount(retry + 1);
+
+        // Exponential backoff
+        await new Promise((resolve) => setTimeout(resolve, 500 * (retry + 1)));
+
+        return fetchArticles(topic, retry + 1);
       }
 
-      data.blogs = data.blogs.filter((blog: Discover) => blog.thumbnail);
-
-      setDiscover(data.blogs);
-    } catch (err: any) {
-      console.error('Error fetching data:', err.message);
-      toast.error('Error fetching data');
+      // Return empty array on final failure - don't block UI
+      setDiscover([]);
+      toast.error(`Failed to fetch articles: ${errorMsg}`, {
+        action: {
+          label: 'Retry',
+          onClick: () => {
+            setRetryCount(0);
+            fetchArticles(topic, 0);
+          },
+        },
+        duration: 5000,
+      });
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchArticles(activeTopic);
+    setRetryCount(0);
+    fetchArticles(activeTopic, 0);
   }, [activeTopic]);
 
   return (
@@ -127,18 +179,55 @@ const Page = () => {
           </div>
         ) : (
           <div className="flex flex-col gap-4 pb-28 pt-5 lg:pb-8 w-full">
-            <div className="block lg:hidden">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {discover?.map((item, i) => (
-                  <SmallNewsCard key={`mobile-${i}`} item={item} />
-                ))}
+            {/* Empty state message */}
+            {discover?.length === 0 && !error && (
+              <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+                <Globe2Icon size={48} className="opacity-50" />
+                <p className="text-lg text-light-600/70 dark:text-dark-600/70">
+                  No articles found for this topic
+                </p>
+                <button
+                  onClick={() => {
+                    setRetryCount(0);
+                    fetchArticles(activeTopic, 0);
+                  }}
+                  className="px-4 py-2 rounded-lg bg-cyan-300/20 border border-cyan-700/60 dark:border-cyan-300/40 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-300/30 transition"
+                >
+                  Try Again
+                </button>
               </div>
-            </div>
+            )}
 
-            <div className="hidden lg:block">
-              {discover &&
-                discover.length > 0 &&
-                (() => {
+            {/* Error state message */}
+            {error && discover?.length === 0 && (
+              <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+                <div className="text-red-500 opacity-50">⚠️</div>
+                <p className="text-lg text-red-600 dark:text-red-400">{error}</p>
+                <button
+                  onClick={() => {
+                    setRetryCount(0);
+                    fetchArticles(activeTopic, 0);
+                  }}
+                  className="px-4 py-2 rounded-lg bg-red-300/20 border border-red-700/60 dark:border-red-300/40 text-red-700 dark:text-red-300 hover:bg-red-300/30 transition"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* Results grid */}
+            {discover && discover.length > 0 && (
+              <>
+                <div className="block lg:hidden">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {discover.map((item, i) => (
+                      <SmallNewsCard key={`mobile-${i}`} item={item} />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="hidden lg:block">
+                  {(() => {
                   const sections = [];
                   let index = 0;
 
@@ -258,9 +347,11 @@ const Page = () => {
                     }
                   }
 
-                  return sections;
-                })()}
-            </div>
+                    return sections;
+                  })()}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
